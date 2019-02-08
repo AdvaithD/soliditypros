@@ -3,6 +3,8 @@ import styled, { createGlobalStyle } from "styled-components";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import js from "react-syntax-highlighter/dist/languages/hljs/javascript";
 import { tomorrowNightBright } from "react-syntax-highlighter/dist/styles/hljs";
+//
+import profileImg from "media/profile.jpg";
 
 SyntaxHighlighter.registerLanguage("javascript", js);
 
@@ -151,7 +153,7 @@ export const Avatar = styled.div`
   height: 70px;
   border-radius: 200px;
   margin-right: 1rem;
-  background-image: url(https://raw.githubusercontent.com/tannerlinsley/files/master/images/avatar.jpg);
+  background-image: url(${profileImg});
   background-size: cover;
   border: 3px solid ${props => props.theme.foreground};
   transition: all 0.5s ease;
