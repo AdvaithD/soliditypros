@@ -17,7 +17,7 @@
     "react-dom": "^16.8.1",
     "react-hot-loader": "^4.3.12",
     "react-location": "^1.0.8",
-    "react-static": "^6.0.18",
+    "react-static": "^6.3.5",
     "react-static-plugin-mdx": "^6.3.1",
     "react-static-plugin-styled-components": "^6.3.0",
     "react-syntax-highlighter": "^10.1.2",
