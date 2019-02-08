@@ -1,0 +1,406 @@
+# React Hooks, the rebirth of State Management and beyond.
+
+_February 4, 2019_
+
+![Plant Growing](https://cdn-images-1.medium.com/max/1600/1*BTkuqQ0LeTA0wBWUl18kug.jpeg)
+
+> This is a parallel post to [my recent livestream “The “Action Hooks” pattern with React Hooks”](https://www.youtube.com/watch?v=JRz-xMIyPUA)
+
+In late 2018 React Hooks were announced, and within minutes, I knew they would change everything. I began tinkering with how hooks would change my application development, and the first massive wins were obvious:
+
+- Colocated logic
+- No more need for render-prop or higher-order components
+- More concise, expressive and declarative control over things like state, memoization, and side-effects
+- Just functions — Way more composable than components
+
+All of these features have already been explored quite a bit online by some of the best frontend-teaching minds of the world. I myself have even produced [quite a few videos about hooks on my Youtube channel](https://youtube.com/tannerlinsley). **But we’re still very much in the exploratory phase of hooks**.
+
+So what lies beyond what we know? What are hooks going to eventually allow us to do?
+
+Exploring the patterns that hooks afford us gets me excited every day as I begin to code with them. Patterns are where we break free from the prescribed usage of an API and begin to push its limits and initial expectations. From my very limited perspective, I already see patterns around hooks for things like declaratively consuming imperative API’s and declaratively performing side effects. These patterns are exciting and I can’t wait to see where they go, but there are some patterns that I am more interested in than others, mainly patterns surrounding **state management**.
+
+## Managing State with Hooks
+
+I decided to explore this concept by building my own global state manager using hooks, following these guidelines for the functionality:
+
+- Allow me to store state in a highly-accessible way.
+- Help me subscribe to state wherever I want in a performant way
+- Let me update state in any way that fits my use case (setState, immer, reducers, etc)
+
+First, I built a store factory, a function that would build a new store I could use in my app.
+
+```javascript
+function makeStore() {
+  // Make a context for the store
+  const context = React.createContext();
+
+  // Make a provider that takes an initialValue
+  const Provider = ({ initialValue = {}, children }) => {
+    // Make a new state instance (could even use immer here!)
+    const [state, setState] = useState(initialValue);
+
+    // Memoize the context value to update when the state does
+    const contextValue = useMemo(() => [state, setState], [state]);
+
+    // Provide the store to children
+    return <context.Provider value={contextValue}>{children}</context.Provider>;
+  };
+
+  // A hook to help consume the store
+  const useStore = () => useContext(context);
+
+  return { Provider, useStore };
+}
+```
+
+With the `makeStore` function, I could then create a new store for my app:
+
+```javascript
+const [StoreProvider, useStore] = makeStore();
+
+export { StoreProvider, useStore };
+```
+
+From here on out, I felt right at home!
+
+```javascript
+import { StoreProvider, useStore } from "./store";
+
+const Counter = () => {
+  // Use the store
+  const [state, setState] = useStore();
+
+  const increment = () =>
+    setState(old => ({
+      ...old,
+      count: old.count + 1
+    }));
+
+  const decrement = () =>
+    setState(old => ({
+      ...old,
+      count: old.count - 1
+    }));
+
+  return (
+    <div>
+      <button onClick={decrement}>-</button>
+      {state.count}
+      <button onClick={increment}>+</button>
+    </div>
+  );
+};
+
+const App = () => {
+  return (
+    // Provide the store to the app
+    <StoreProvider initialValue={{ count: 0 }}>
+      <Counter />
+    </StoreProvider>
+  );
+};
+```
+
+This approach quickly proved to me that you can be productive with a very minimal amount of code. But, this code clearly isn’t what people are shipping with state management libraries these days, so why and how does one get from something simple like our state factory to something more complicated?
+
+Thinking about this more, two features came to mind that I hadn’t implemented in my store yet:
+
+- Performance optimizations (computed values, memoization, change detection)
+- Update mechanisms (actions, methods, mutators, etc.)
+
+Both of these are fairly vital parts of any state management utility for it to scale appropriately.
+
+Implementing these two things is not only difficult to architect correctly, but also difficult to expose as an API to the outside world without creating a lot of opinionated API surface area. By making both of these features a permanent part of my API, model or architecture, I would essentially be cornering myself into an upper-bound opinionated way to control and extend them outside of my own code.
+
+A good example of this is how, at first, I thought it would be clever to accept some actions in the store itself that would be capable of modifying the store when called:
+
+```javascript
+function makeStore({ actions }) {
+  // Make a context for the store
+  const context = React.createContext();
+
+  // Make a provider that takes an initialValue
+  const Provider = ({ initialValue = {}, children }) => {
+    // Make a new state instance
+    const [state, setState] = useState(initialValue);
+
+    // Bind the actions with the old state and args
+    const boundActions = {}
+    Object.keys(actions).forEach(key => {
+      boundActions[key] = (...args) =>
+        setState(old => actions\[key\](old, ...args))
+    })
+
+    // Memoize the context value to update when the state does
+    const contextValue = useMemo(() => [state, boundActions], [state]);
+
+    // Provide the store to children
+    return <context.Provider value={contextValue}>{children}</context.Provider>;
+  };
+
+  // A hook to help us consume the store
+  const useStore = () => useContext(context);
+
+  return [Provider, useStore];
+}
+```
+
+Binding these actions to the store would allow me to create and call them like this:
+
+```javascript
+const [Provider, useStore] = makeStore({
+  // Create actions that get the store as
+  // the first parameter
+  actions: {
+    increment: (state, amount = 1) => state.count + amount,
+    decrement: (state, amount = 1) => state.count - amount
+  }
+});
+
+// ...
+
+function Counter() {
+  // Get the actions from the store
+  const [_, { increment }] = useStore();
+
+  // Call the action
+  return <button onClick={() => increment(2)}>Increment by 2</button>;
+}
+```
+
+I’d seen this in the wild quite a bit with smaller and more recent state managers and though it felt pretty clever at first, it lead to a lot of other difficult questions:
+
+- How can I do async actions?
+- What if I need access to other information not in the store like LocalStorage or a router?
+
+Both of these questions immediately were very tricky to answer.
+
+To add async capabilities to my store, I would need to get around the synchronous nature of the `setState` callback, and I would also need to build a middleware-like system of injecting arbitrary data into my actions to gain access to things like local storage or anything not related to my store. Slowly but surely, as I started adding these things, my API became less flexible and opinionated and ultimately started to resemble the Redux middleware pattern. Yuck.
+
+How did I get here? Why am I trying to solve this problem? Everything was going great until I tried to integrate external data into my state manager!
+
+Integrating two unrelated things together in a productive way should honestly be the superpower every developer dreams of having. I believe this is where real value is crafted, how new powerful tools are created, and ultimately how we make users happy.
+
+I decided that if I truly wanted powerful integration abilities in my store, I needed to stay as far away from middleware and custom API’s as possible. But, what else could I do to achieve what I wanted? I was stumped.
+
+## In with the Hooks. Out with abstractions.
+
+Any time I am faced with a conflict in patterns or architecture, I try to go back to the platform and likewise back to the basics to see how the problem can be solved at the platform or native level. This is not the first time I’ve felt this pain, either. I have probably tried to mitigate it on several other occasions and epically failed.
+
+But this time around, something was different… **I had hooks!**
+
+Wait…
+
+> **What if actions and middleware are just hooks?!**
+
+Think about it:
+
+- Hooks, like actions, can provide almost any functionality no matter where they are used in the component tree
+- Hooks have access to context, lifecycle, and the platform at no extra cost.
+- Hooks are infinitely composable, so I could encapsulate and import any external functionality I want without ever writing middleware or integration code between the services they use.
+
+Hooks become the actions, middleware and ultimately the core integration layer between unrelated features.
+
+I immediately decided I needed to extract my “store actions” into their own hooks:
+
+```javascript
+const useIncrement = () => {
+  const [state, setState] = useStore();
+
+  return () =>
+    setState(old => ({
+      ...old,
+      count: old.count + 1
+    }));
+};
+
+const useDecrement = () => {
+  const [state, setState] = useStore();
+
+  return () =>
+    setState(old => ({
+      ...old,
+      count: old.count + 1
+    }));
+};
+
+const Counter = () => {
+  const [{ count }] = useStore();
+  const increment = useIncrement();
+  const decrement = useDecrement();
+
+  return (
+    <div>
+      <button onClick={decrement}>-</button>
+      {count}
+      <button onClick={increment}>+</button>
+    </div>
+  );
+};
+```
+
+I could then reuse these hooks to create other action hooks. It’s hook-ception! Oh, and async actions? Effortless.
+
+```javascript
+const useAsyncIncrement = () => {
+  const increment = useIncrement();
+
+  return async () => {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    increment();
+  };
+};
+```
+
+Next I tinkered with other state management patterns like namespacing and sub-stores:
+
+```javascript
+const useCount = () => {
+  const [{ count }, setState] = useStore();
+
+  const increment = () => {
+    setState(old => ({
+      ...old,
+      count: old.count + 1
+    }));
+  }
+
+  const decrement = () =>
+    setState(old => ({
+      ...old,
+      count: old.count + 1
+    }));
+  }
+
+  return {count, increment, decrement}
+}
+
+const Counter = () => {
+  const { count, increment, decrement } = useCount()
+
+  return (
+    <div>
+      <button onClick={decrement}>-</button>
+      {count}
+      <button onClick={increment}>+</button>
+    </div>
+  );
+};
+```
+
+It was so easy to move things around to fit my needs! But still lingering in my mind was the question of computed values…
+
+> _“How could I implement something like Reselect?”_
+
+Memoized selectors (and tools like Reselect) are just functions that cache their last result based on the parameters you pass them. If parameters change, the function result is recomputed and temporarily cached.
+
+If you’ve tried out the `useMemo` hook recently, that may sound extremely familiar. Here’s an example of its usage:
+
+```javascript
+const computedValue = useMemo(() => a + b, [a, b]);
+```
+
+When `a` or `b` changes, `computedValue` will be recalculated!
+
+Similar to a traditional memoized function, `useMemo` will only recalculate the function you pass it when the guards (the array of values after the function) change. So why not use `useMemo` instead of Reselect?
+
+I knew it would take a bit more than a counter to illustrate this one, though. So bring on the todos!
+
+```javascript
+const useMyTodos = () => {
+  const [{ todos, myUserID }] = useStore();
+
+  // Only update when todos or myUserID updates
+  return useMemo(() => todos.filter(todo => todo.userID === myUserID), [
+    todos,
+    myUserID
+  ]);
+};
+
+const App = () => {
+  const todos = useMyTodos();
+};
+```
+
+With the above pattern, I noticed I could continue composing hooks together to form a type of selector pattern:
+
+```javascript
+const useMyTodos = () => {
+  const [{ todos, myUserID }] = useStore();
+
+  // Only update when todos or myUserID updates
+  return useMemo(() => todos.filter(todo => todo.userID === myUserID), [
+    todos,
+    myUserID
+  ]);
+};
+
+const useMyPendingTodos = () => {
+  const myTodos = useMyTodos();
+
+  return useMemo(() => myTodos.filter(todo => todo.status === "pending"), [
+    myTodos
+  ]);
+};
+
+const App = () => {
+  const todos = useMyPendingTodos();
+};
+```
+
+Alright, that was awesome. Bring on the next battle! How about integration with other libraries or hooks? Well, that seemed like a no brainer:
+
+```javascript
+const useLogout = () => {
+  // Use any store you want!
+  const [_, setStore] = Store.useStore();
+
+  // Have a localStorage hook?
+  const [_, setUserToken] = useLocalStorage("userToken");
+
+  // Have a router hook?
+  const { navigate } = useLocation();
+
+  return () => {
+    // Easy!
+    setStore(draft => {
+      draft.auth.loading = true;
+      draft.auth.jwt = null;
+      draft.auth.user = null;
+    });
+    setUserToken(undefined);
+    navigate("/");
+  };
+};
+
+const App = () => {
+  const logout = useLogout();
+
+  return <button onClick={logout}>Logout</button>;
+};
+```
+
+No problem! By this point I felt invincible with this pattern, especially since it didn’t rely on any special library, just React. I felt as though I had just undergone some revelatory hook-based renaissance.
+
+## **Hooks are the future of React**
+
+State management is **just one way** that hooks will change the React ecosystem. As people come to realize that hooks drastically level the playing field when it comes to what you can do on your own without a library, I’m sure we will start to see a shift from larger libraries to smaller, more composable hooks.
+
+My predictions for 2019:
+
+- State libraries will either embrace hooks as a core piece of their API, or slowly self-deprecate and developers will either:
+- Build their own state management, or
+- Migrate away from non-hook state management libraries to hook-based ones
+- Hooks will become the primary form of managing, subscribing to and updating application state in React applications
+- Hooks will become the universal integration layer between all things React
+- Large monolithic libraries will begin to export smaller composable hooks
+
+My challenge to you:
+
+- Build your own global state manager with hooks
+- Write a custom hook that encapsulates shared logic
+- Convert a render prop component to use hooks
+- Try `useMemo` to create a computed value pipeline
+- Convert an open source library to use hooks!
+
+I can’t wait to see what comes next for React Hooks and mostly what you are going to build with them. Good luck!
